@@ -2,7 +2,7 @@
 KinesisStream Client for golang which manage sequence number in DynamoDB.
 
 ## Overview
-The package will abstract shards of kinesis and you can read data via single channel.
+The package will abstract the shards of the kinesis stream so you can read data via single channel.
 
 This will guarantee the order of records in the same shard but won't guarantee the order across shards.
 
@@ -24,3 +24,41 @@ func main() {
 	}
 }
 ```
+
+### requirements
+#### IAM Policy
+```
+{
+  "Version": "2012-10-17",
+  "Statement": [{
+      "Effect": "Allow",
+      "Action": [
+        "dynamodb:GetItem",
+        "dynamodb:UpdateItem"
+      ],
+      "Resource": [
+        "arn:aws:dynamodb:<region>:<account>:table/<table>"
+      ]
+    },
+    {
+      "Effect": "Allow",
+      "Action": [
+        "kinesis:GetShardIterator",
+        "kinesis:GetRecords"
+      ],
+      "Resource": [
+        "arn:aws:kinesis:<region>:<account>:stream/<stream>"
+      ]
+    },
+    {
+      "Effect": "Allow",
+      "Action": "kinesis:ListShards",
+      "Resource": "*"
+    }
+  ]
+}
+```
+
+### TODO
+- Graceful shatdown
+- Context
