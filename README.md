@@ -1,4 +1,9 @@
 # kinesis-ddb-consumer
+[![GoDoc][1]][2]
+
+[1]: https://godoc.org/github.com/atsushi-ishibashi/kinesis-ddb-consumer?status.svg
+[2]: https://godoc.org/github.com/atsushi-ishibashi/kinesis-ddb-consumer
+
 KinesisStream Client for golang which manage sequence number in DynamoDB.
 
 ## Overview
