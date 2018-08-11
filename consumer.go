@@ -21,23 +21,32 @@ type kinesisConsumer struct {
 	shards             []string
 	maxWait            int
 	recordCh           chan Record
+
+	ddbsvc     *ddbClient
+	kinesissvc *kinesisClient
 }
 
 func New(appName, streamName, tableName string) (Consumer, error) {
-	ss, err := getShards(streamName)
+	kc := newKinesisClient(streamName)
+
+	ss, err := kc.getShards()
 	if err != nil {
 		return nil, err
 	}
 
-	go runSave(tableName)
+	dc := newDdbClient(appName, streamName, tableName)
+
+	go dc.runSave()
 
 	return &kinesisConsumer{
-		app:      appName,
-		stream:   streamName,
-		table:    tableName,
-		shards:   ss,
-		maxWait:  20,
-		recordCh: make(chan Record),
+		app:        appName,
+		stream:     streamName,
+		table:      tableName,
+		shards:     ss,
+		maxWait:    20,
+		recordCh:   make(chan Record),
+		ddbsvc:     dc,
+		kinesissvc: kc,
 	}, nil
 }
 
@@ -65,12 +74,12 @@ func (c *kinesisConsumer) GetChannel() <-chan Record {
 }
 
 func (c *kinesisConsumer) readLoop(shardID string) {
-	seqNum, err := getSequenceNumber(c.app, c.stream, shardID, c.table)
+	seqNum, err := c.ddbsvc.getSequenceNumber(shardID)
 	if err != nil {
 		// TODO:
 		fmt.Println(err)
 	}
-	iterator, err := getShardIterator(c.stream, shardID, seqNum)
+	iterator, err := c.kinesissvc.getShardIterator(shardID, seqNum)
 	if err != nil {
 		// TODO:
 		fmt.Println(err)
@@ -78,12 +87,12 @@ func (c *kinesisConsumer) readLoop(shardID string) {
 
 	sleepTime := 0
 	for {
-		resp, err := getRecords(iterator)
+		resp, err := c.kinesissvc.getRecords(iterator)
 		if err != nil {
 			// TODO:
 			fmt.Println(err)
-			seqNum, _ = getSequenceNumber(c.app, c.stream, shardID, c.table)
-			iterator, _ = getShardIterator(c.stream, shardID, seqNum)
+			seqNum, _ = c.ddbsvc.getSequenceNumber(shardID)
+			iterator, _ = c.kinesissvc.getShardIterator(shardID, seqNum)
 			continue
 		}
 		for _, v := range resp.Records {
@@ -94,7 +103,7 @@ func (c *kinesisConsumer) readLoop(shardID string) {
 				rec.ArrivalTimestamp = *v.ApproximateArrivalTimestamp
 			}
 			c.recordCh <- rec
-			setSequenceNumber(c.app, c.stream, shardID, *v.SequenceNumber)
+			c.ddbsvc.setSequenceNumber(shardID, *v.SequenceNumber)
 		}
 
 		if resp.NextShardIterator != nil {

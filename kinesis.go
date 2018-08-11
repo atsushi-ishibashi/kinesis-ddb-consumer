@@ -15,13 +15,25 @@ func init() {
 	kinesisconn = kinesis.New(session.New(aws.NewConfig().WithRegion("ap-northeast-1")))
 }
 
-func getShards(stream string) ([]string, error) {
+type kinesisClient struct {
+	kinesisconn kinesisiface.KinesisAPI
+	stream      string
+}
+
+func newKinesisClient(stream string) *kinesisClient {
+	return &kinesisClient{
+		kinesisconn: kinesis.New(session.New(aws.NewConfig().WithRegion("ap-northeast-1"))),
+		stream:      stream,
+	}
+}
+
+func (c *kinesisClient) getShards() ([]string, error) {
 	shards := make([]string, 0)
 
 	input := &kinesis.ListShardsInput{
-		StreamName: aws.String(stream),
+		StreamName: aws.String(c.stream),
 	}
-	resp, err := kinesisconn.ListShards(input)
+	resp, err := c.kinesisconn.ListShards(input)
 	if err != nil {
 		return shards, err
 	}
@@ -31,11 +43,11 @@ func getShards(stream string) ([]string, error) {
 	return shards, nil
 }
 
-func getShardIterator(stream, shardID, seqNum string) (string, error) {
+func (c *kinesisClient) getShardIterator(shardID, seqNum string) (string, error) {
 	input := &kinesis.GetShardIteratorInput{
 		ShardId:           aws.String(shardID),
 		ShardIteratorType: aws.String(kinesis.ShardIteratorTypeAfterSequenceNumber),
-		StreamName:        aws.String(stream),
+		StreamName:        aws.String(c.stream),
 	}
 	if seqNum == "" {
 		input.ShardIteratorType = aws.String(kinesis.ShardIteratorTypeTrimHorizon)
@@ -43,16 +55,16 @@ func getShardIterator(stream, shardID, seqNum string) (string, error) {
 		input.StartingSequenceNumber = aws.String(seqNum)
 	}
 
-	resp, err := kinesisconn.GetShardIterator(input)
+	resp, err := c.kinesisconn.GetShardIterator(input)
 	if err != nil {
 		return "", err
 	}
 	return *resp.ShardIterator, nil
 }
 
-func getRecords(iterator string) (*kinesis.GetRecordsOutput, error) {
+func (c *kinesisClient) getRecords(iterator string) (*kinesis.GetRecordsOutput, error) {
 	input := &kinesis.GetRecordsInput{
 		ShardIterator: aws.String(iterator),
 	}
-	return kinesisconn.GetRecords(input)
+	return c.kinesisconn.GetRecords(input)
 }
