@@ -12,20 +12,21 @@ import (
 	"github.com/aws/aws-sdk-go/service/dynamodb/dynamodbiface"
 )
 
-var (
-	dynamoconn dynamodbiface.DynamoDBAPI
-	seqmu      sync.RWMutex
-	seqMap     = make(map[*key]string)
-)
-
-type key struct {
-	app    string
-	stream string
-	shard  string
+type ddbClient struct {
+	dynamoconn         dynamodbiface.DynamoDBAPI
+	app, stream, table string
+	seqmu              sync.RWMutex
+	shardSeqMap        map[string]string
 }
 
-func init() {
-	dynamoconn = dynamodb.New(session.New(aws.NewConfig().WithRegion("ap-northeast-1")))
+func newDdbClient(app, stream, table string) *ddbClient {
+	return &ddbClient{
+		dynamoconn:  dynamodb.New(session.New(aws.NewConfig().WithRegion("ap-northeast-1"))),
+		app:         app,
+		stream:      stream,
+		table:       table,
+		shardSeqMap: make(map[string]string),
+	}
 }
 
 type ddbRecord struct {
@@ -34,20 +35,20 @@ type ddbRecord struct {
 	SequenceNumber string `dynamodbav:"SequenceNumber"`
 }
 
-func getSequenceNumber(app, stream, shard string, table string) (string, error) {
+func (c *ddbClient) getSequenceNumber(shard string) (string, error) {
 	input := &dynamodb.GetItemInput{
-		TableName:      aws.String(table),
+		TableName:      aws.String(c.table),
 		ConsistentRead: aws.Bool(true),
 		Key: map[string]*dynamodb.AttributeValue{
 			"AppName": &dynamodb.AttributeValue{
-				S: aws.String(app),
+				S: aws.String(c.app),
 			},
 			"StreamShard": &dynamodb.AttributeValue{
-				S: aws.String(fmt.Sprintf("%s_%s", stream, shard)),
+				S: aws.String(fmt.Sprintf("%s_%s", c.stream, shard)),
 			},
 		},
 	}
-	resp, err := dynamoconn.GetItem(input)
+	resp, err := c.dynamoconn.GetItem(input)
 	if err != nil {
 		return "", err
 	}
@@ -59,48 +60,43 @@ func getSequenceNumber(app, stream, shard string, table string) (string, error) 
 	return dr.SequenceNumber, nil
 }
 
-func setSequenceNumber(app, stream, shard string, seqNum string) {
-	seqmu.Lock()
-	defer seqmu.Unlock()
+func (c *ddbClient) setSequenceNumber(shard string, seqNum string) {
+	c.seqmu.Lock()
+	defer c.seqmu.Unlock()
 
 	exist := false
-	for k := range seqMap {
-		if k.app == app && k.stream == stream && k.shard == shard {
+	for k := range c.shardSeqMap {
+		if k == shard {
 			exist = true
-			seqMap[k] = seqNum
+			c.shardSeqMap[k] = seqNum
 		}
 	}
 
 	if !exist {
-		k := &key{
-			app:    app,
-			stream: stream,
-			shard:  shard,
-		}
-		seqMap[k] = seqNum
+		c.shardSeqMap[shard] = seqNum
 	}
 }
 
-func runSave(table string) {
+func (c *ddbClient) runSave() {
 	ticker := time.NewTicker(10 * time.Second)
 
 	for _ = range ticker.C {
-		saveSequenceNumber(table)
+		c.saveSequenceNumber()
 	}
 }
 
-func saveSequenceNumber(table string) {
-	seqmu.RLock()
-	defer seqmu.RUnlock()
+func (c *ddbClient) saveSequenceNumber() {
+	c.seqmu.RLock()
+	defer c.seqmu.RUnlock()
 
-	for k, v := range seqMap {
-		if err := putSequenceNumber(k.app, k.stream, k.shard, v, table); err != nil {
+	for shard, seqnum := range c.shardSeqMap {
+		if err := c.putSequenceNumber(shard, seqnum); err != nil {
 			fmt.Println(err)
 		}
 	}
 }
 
-func putSequenceNumber(app, stream, shard, seqNum string, table string) error {
+func (c *ddbClient) putSequenceNumber(shard, seqNum string) error {
 	input := &dynamodb.UpdateItemInput{
 		ExpressionAttributeNames: map[string]*string{
 			"#SN": aws.String("SequenceNumber"),
@@ -112,17 +108,17 @@ func putSequenceNumber(app, stream, shard, seqNum string, table string) error {
 		},
 		Key: map[string]*dynamodb.AttributeValue{
 			"AppName": {
-				S: aws.String(app),
+				S: aws.String(c.app),
 			},
 			"StreamShard": {
-				S: aws.String(fmt.Sprintf("%s_%s", stream, shard)),
+				S: aws.String(fmt.Sprintf("%s_%s", c.stream, shard)),
 			},
 		},
 		ConditionExpression: aws.String("attribute_not_exists(#SN) OR #SN <= :sn"),
-		TableName:           aws.String(table),
+		TableName:           aws.String(c.table),
 		UpdateExpression:    aws.String("SET #SN = :sn"),
 	}
 
-	_, err := dynamoconn.UpdateItem(input)
+	_, err := c.dynamoconn.UpdateItem(input)
 	return err
 }
