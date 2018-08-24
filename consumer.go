@@ -110,7 +110,7 @@ func (c *kinesisConsumer) readLoop(shardID string) {
 			iterator = *resp.NextShardIterator
 		}
 
-		if len(resp.Records) > 0 {
+		if len(resp.Records) > 0 || (resp.MillisBehindLatest != nil && *resp.MillisBehindLatest > 10000 {
 			sleepTime = 0
 		} else {
 			if sleepTime == 0 {
